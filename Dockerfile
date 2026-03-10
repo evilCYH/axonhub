@@ -14,7 +14,7 @@ RUN pnpm build
 FROM alpine AS frontend-dist
 COPY --from=frontend-builder /build/dist /dist
 
-FROM golang:alpine AS backend-builder
+FROM --platform=$BUILDPLATFORM golang:alpine AS backend-builder
 
 WORKDIR /build
 
@@ -29,12 +29,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY . .
 COPY --from=frontend-dist /dist /build/internal/server/static/dist
 
-ENV GO111MODULE=on \
-    CGO_ENABLED=0 \
-    GOOS=linux
-
+# Hardcode arm64 for Oracle ARM server (aarch64)
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
     GOTOOLCHAIN=auto go build \
     -tags=nomsgpack \
     -ldflags "-s -w -X 'github.com/looplj/axonhub/internal/build.Version=$(cat internal/build/VERSION 2>/dev/null || echo dev)' -X 'github.com/looplj/axonhub/internal/build.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)'" \
