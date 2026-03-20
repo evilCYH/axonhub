@@ -154,3 +154,6 @@ locales_backup
 # Chunkhound local database
 .chunkhound/
 .superset/
+.snow/
+*.db-shm
+*.db-wal
