@@ -157,6 +157,9 @@ func convertLLMToGeminiRequestWithConfig(chatReq *llm.Request, config *Config, s
 			switch strings.ToLower(chatReq.ReasoningEffort) {
 			case "none", "low", "medium", "high":
 				thinkingConfig.ThinkingLevel = chatReq.ReasoningEffort
+			case "xhigh":
+				// "xhigh" comes from Anthropic "max"; Gemini's highest level is "high".
+				thinkingConfig.ThinkingLevel = "high"
 			default:
 				// For non-standard effort values, convert to budget
 				thinkingBudget := reasoningEffortToThinkingBudgetWithConfig(chatReq.ReasoningEffort, config)
@@ -360,10 +363,26 @@ func convertLLMMessageToGeminiContent(msg *llm.Message, scope shared.TransportSc
 						lastPart = geminiPart
 					}
 				}
+			case "video_url":
+				if part.VideoURL != nil && part.VideoURL.URL != "" {
+					geminiPart := convertVideoURLToGeminiPart(part.VideoURL)
+					if geminiPart != nil {
+						parts = append(parts, geminiPart)
+						lastPart = geminiPart
+					}
+				}
 			case "document":
 				// Handle document type (PDF, Word, etc.)
 				if part.Document != nil && part.Document.URL != "" {
 					geminiPart := convertDocumentURLToGeminiPart(part.Document)
+					if geminiPart != nil {
+						parts = append(parts, geminiPart)
+						lastPart = geminiPart
+					}
+				}
+			case "input_audio":
+				if part.InputAudio != nil && part.InputAudio.Data != "" {
+					geminiPart := convertAudioToGeminiPart(part.InputAudio)
 					if geminiPart != nil {
 						parts = append(parts, geminiPart)
 						lastPart = geminiPart
