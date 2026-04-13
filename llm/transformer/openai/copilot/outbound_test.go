@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -85,82 +86,6 @@ func TestOutboundTransformer_APIFormat(t *testing.T) {
 	assert.Equal(t, llm.APIFormatOpenAIChatCompletion, transformer.APIFormat())
 }
 
-func TestParseModelVersion(t *testing.T) {
-	tests := []struct {
-		name          string
-		version       string
-		expectedMajor int
-		expectedMinor int
-		expectedOK    bool
-	}{
-		{
-			name:          "major only version",
-			version:       "6",
-			expectedMajor: 6,
-			expectedMinor: 0,
-			expectedOK:    true,
-		},
-		{
-			name:          "major minor version",
-			version:       "5.4",
-			expectedMajor: 5,
-			expectedMinor: 4,
-			expectedOK:    true,
-		},
-		{
-			name:          "double digit minor version",
-			version:       "5.10",
-			expectedMajor: 5,
-			expectedMinor: 10,
-			expectedOK:    true,
-		},
-		{
-			name:          "ignores extra segments after minor",
-			version:       "6.1.2",
-			expectedMajor: 6,
-			expectedMinor: 1,
-			expectedOK:    true,
-		},
-		{
-			name:          "empty version is invalid",
-			version:       "",
-			expectedMajor: 0,
-			expectedMinor: 0,
-			expectedOK:    false,
-		},
-		{
-			name:          "non numeric major is invalid",
-			version:       "preview",
-			expectedMajor: 0,
-			expectedMinor: 0,
-			expectedOK:    false,
-		},
-		{
-			name:          "non numeric minor is invalid",
-			version:       "5.preview",
-			expectedMajor: 0,
-			expectedMinor: 0,
-			expectedOK:    false,
-		},
-		{
-			name:          "empty minor is treated as major only",
-			version:       "6.",
-			expectedMajor: 6,
-			expectedMinor: 0,
-			expectedOK:    true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			major, minor, ok := parseModelVersion(tt.version)
-			assert.Equal(t, tt.expectedMajor, major)
-			assert.Equal(t, tt.expectedMinor, minor)
-			assert.Equal(t, tt.expectedOK, ok)
-		})
-	}
-}
-
 func TestUsesResponsesAPI(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -168,19 +93,19 @@ func TestUsesResponsesAPI(t *testing.T) {
 		expected bool
 	}{
 		{
-			name:     "codex model uses responses API",
-			model:    "gpt-5.2-codex",
+			name:     "gpt-5 uses responses API",
+			model:    "gpt-5",
 			expected: true,
 		},
 		{
-			name:     "codex detection is case insensitive",
-			model:    "GPT-5.2-CODEX",
-			expected: true,
-		},
-		{
-			name:     "gpt-5.3 does not use responses API",
-			model:    "gpt-5.3",
+			name:     "gpt-5-mini does not use responses API",
+			model:    "gpt-5-mini",
 			expected: false,
+		},
+		{
+			name:     "gpt-5.3 uses responses API",
+			model:    "gpt-5.3",
+			expected: true,
 		},
 		{
 			name:     "gpt-5.4 uses responses API",
@@ -223,8 +148,13 @@ func TestUsesResponsesAPI(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "other model does not use responses API",
+			name:     "claude model does not use responses API",
 			model:    "claude-sonnet-4.6",
+			expected: false,
+		},
+		{
+			name:     "claude-3-5-sonnet does not use responses API",
+			model:    "claude-3-5-sonnet",
 			expected: false,
 		},
 	}
@@ -543,6 +473,101 @@ func TestOutboundTransformer_TransformRequest_VisionHeaders(t *testing.T) {
 			} else {
 				assert.Empty(t, visionHeader)
 			}
+		})
+	}
+}
+
+func TestXInitiatorDefault(t *testing.T) {
+	ctx := context.Background()
+	mockToken := "ghu_testtoken123"
+	transformer, err := NewOutboundTransformer(OutboundTransformerParams{
+		TokenProvider: &mockTokenProvider{token: mockToken},
+	})
+	require.NoError(t, err)
+
+	request := &llm.Request{
+		Model: "gpt-4o",
+		Messages: []llm.Message{
+			{
+				Role:    "user",
+				Content: llm.MessageContent{Content: lo.ToPtr("Hello")},
+			},
+		},
+	}
+
+	httpReq, err := transformer.TransformRequest(ctx, request)
+	require.NoError(t, err)
+	require.NotNil(t, httpReq)
+	// With message-based inference, user message means initiator is "user"
+	assert.Equal(t, "user", httpReq.Headers.Get(InitiatorHeader))
+}
+func TestXInitiatorForwarding(t *testing.T) {
+	ctx := context.Background()
+	mockToken := "ghu_testtoken123"
+	transformer, err := NewOutboundTransformer(OutboundTransformerParams{
+		TokenProvider: &mockTokenProvider{token: mockToken},
+	})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name           string
+		initiatorValue string
+		expected       string
+	}{
+		{
+			name:           "valid user initiator value",
+			initiatorValue: "user",
+			expected:       "user",
+		},
+		{
+			name:           "valid agent initiator value",
+			initiatorValue: "agent",
+			expected:       "agent",
+		},
+		{
+			name:           "case insensitive - USER",
+			initiatorValue: "USER",
+			expected:       "user",
+		},
+		{
+			name:           "case insensitive - Agent",
+			initiatorValue: "Agent",
+			expected:       "agent",
+		},
+		{
+			name:           "invalid value - ignored, inference applies",
+			initiatorValue: "editor",
+			expected:       "user", // Invalid, falls through to inference (user message)
+		},
+		{
+			name:           "empty string - inference applies",
+			initiatorValue: "",
+			expected:       "user", // Empty header, so inference from message applies
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := &llm.Request{
+				Model: "gpt-4o",
+				Messages: []llm.Message{
+					{
+						Role:    "user",
+						Content: llm.MessageContent{Content: lo.ToPtr("Hello")},
+					},
+				},
+				RawRequest: &httpclient.Request{
+					Headers: make(http.Header),
+				},
+			}
+			if tt.initiatorValue != "" {
+				request.RawRequest.Headers.Set(InitiatorHeader, tt.initiatorValue)
+			}
+
+			httpReq, err := transformer.TransformRequest(ctx, request)
+			require.NoError(t, err)
+			require.NotNil(t, httpReq)
+			assert.Equal(t, tt.expected, httpReq.Headers.Get(InitiatorHeader))
 		})
 	}
 }
@@ -1052,6 +1077,130 @@ func TestOutboundTransformer_TransformError(t *testing.T) {
 			respErr := transformer.TransformError(ctx, tt.rawErr)
 			assert.NotNil(t, respErr)
 			tt.validate(t, respErr)
+		})
+	}
+}
+
+func TestInferCopilotInitiator(t *testing.T) {
+	tests := []struct {
+		name     string
+		messages []llm.Message
+		expected string
+	}{
+		{
+			name:     "empty messages - default to user",
+			messages: []llm.Message{},
+			expected: "user",
+		},
+		{
+			name: "last message from user - returns user",
+			messages: []llm.Message{
+				{Role: "user", Content: llm.MessageContent{Content: lo.ToPtr("Hello")}},
+			},
+			expected: "user",
+		},
+		{
+			name: "last message from assistant - returns agent",
+			messages: []llm.Message{
+				{Role: "user", Content: llm.MessageContent{Content: lo.ToPtr("Hello")}},
+				{Role: "assistant", Content: llm.MessageContent{Content: lo.ToPtr("Hi there")}},
+			},
+			expected: "agent",
+		},
+		{
+			name: "last message from user with tool_result - returns agent",
+			messages: []llm.Message{
+				{Role: "user", Content: llm.MessageContent{Content: lo.ToPtr("Hello")}},
+				{Role: "assistant", Content: llm.MessageContent{Content: lo.ToPtr("Let me check")}},
+				{Role: "user", Content: llm.MessageContent{MultipleContent: []llm.MessageContentPart{
+					{Type: "tool_result", Text: lo.ToPtr("result")},
+				}}},
+			},
+			expected: "agent",
+		},
+		{
+			name: "last message from system - returns agent",
+			messages: []llm.Message{
+				{Role: "system", Content: llm.MessageContent{Content: lo.ToPtr("You are helpful")}},
+				{Role: "user", Content: llm.MessageContent{Content: lo.ToPtr("Hello")}},
+				{Role: "system", Content: llm.MessageContent{Content: lo.ToPtr("Additional context")}},
+			},
+			expected: "agent",
+		},
+		// P2 fix: tool_result positioning tests
+		{
+			name: "tool_result NOT in last position - returns user",
+			messages: []llm.Message{
+				{Role: "user", Content: llm.MessageContent{Content: lo.ToPtr("Hello")}},
+				{Role: "assistant", Content: llm.MessageContent{Content: lo.ToPtr("Let me check")}},
+				{Role: "user", Content: llm.MessageContent{MultipleContent: []llm.MessageContentPart{
+					{Type: "tool_result", Text: lo.ToPtr("result")},
+					{Type: "text", Text: lo.ToPtr("Now answer my question")},
+				}}},
+			},
+			expected: "user", // text is last, user is prompting
+		},
+		{
+			name: "tool_result in last position - returns agent",
+			messages: []llm.Message{
+				{Role: "user", Content: llm.MessageContent{Content: lo.ToPtr("Hello")}},
+				{Role: "assistant", Content: llm.MessageContent{Content: lo.ToPtr("Let me check")}},
+				{Role: "user", Content: llm.MessageContent{MultipleContent: []llm.MessageContentPart{
+					{Type: "text", Text: lo.ToPtr("What about")},
+					{Type: "tool_result", Text: lo.ToPtr("result")},
+				}}},
+			},
+			expected: "agent", // tool_result is last
+		},
+		// P2 fix: attribution field tests
+		{
+			name: "attribution field user - returns user",
+			messages: []llm.Message{
+				{Role: "user", Content: llm.MessageContent{Content: lo.ToPtr("Hello")}, Attribution: "user"},
+			},
+			expected: "user",
+		},
+		{
+			name: "attribution field agent - returns agent",
+			messages: []llm.Message{
+				{Role: "user", Content: llm.MessageContent{Content: lo.ToPtr("Hello")}, Attribution: "agent"},
+			},
+			expected: "agent",
+		},
+		{
+			name: "attribution field overrides role inference",
+			messages: []llm.Message{
+				{Role: "assistant", Content: llm.MessageContent{Content: lo.ToPtr("Hello")}, Attribution: "user"},
+			},
+			expected: "user", // attribution overrides role
+		},
+		{
+			name: "attribution field case insensitive",
+			messages: []llm.Message{
+				{Role: "user", Content: llm.MessageContent{Content: lo.ToPtr("Hello")}, Attribution: "  AGENT  "},
+			},
+			expected: "agent", // normalized
+		},
+		{
+			name: "invalid attribution ignored",
+			messages: []llm.Message{
+				{Role: "user", Content: llm.MessageContent{Content: lo.ToPtr("Hello")}, Attribution: "invalid"},
+			},
+			expected: "user", // falls through to role inference
+		},
+		{
+			name: "invalid attribution falls through to role inference (agent role)",
+			messages: []llm.Message{
+				{Role: "assistant", Content: llm.MessageContent{Content: lo.ToPtr("Hi")}, Attribution: "invalid"},
+			},
+			expected: "agent", // invalid attribution ignored, role != "user" -> agent
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := inferCopilotInitiator(tt.messages)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }

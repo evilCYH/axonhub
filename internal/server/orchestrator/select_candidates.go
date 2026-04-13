@@ -24,23 +24,39 @@ func selectCandidates(inbound *PersistentInboundTransformer) pipeline.Middleware
 
 		selector := inbound.state.CandidateSelector
 
+		// Project-level profile filtering (upper boundary)
+		if inbound.state.APIKey != nil {
+			if project := inbound.state.APIKey.Edges.Project; project != nil {
+				if projectProfile := project.GetActiveProfile(); projectProfile != nil {
+					if len(projectProfile.ChannelIDs) > 0 {
+						selector = WithSelectedChannelsSelector(selector, projectProfile.ChannelIDs)
+					}
+
+					if len(projectProfile.ChannelTags) > 0 {
+						selector = WithChannelTagsFilterSelector(selector, projectProfile.ChannelTags, projectProfile.ChannelTagsMatchMode)
+					}
+				}
+			}
+		}
+
+		// Key-level profile filtering (narrows further within project scope)
 		if profile := inbound.state.APIKey.GetActiveProfile(); profile != nil {
 			if len(profile.ChannelIDs) > 0 {
 				selector = WithSelectedChannelsSelector(selector, profile.ChannelIDs)
 			}
 
 			if len(profile.ChannelTags) > 0 {
-				selector = WithTagsFilterSelector(selector, profile.ChannelTags)
+				selector = WithChannelTagsFilterSelector(selector, profile.ChannelTags, profile.ChannelTagsMatchMode)
 			}
 		}
 
 		// Apply Google native tools filter (only for Gemini native API format)
-		if inbound.APIFormat() == llm.APIFormatGeminiContents {
+		if llmRequest.APIFormat == llm.APIFormatGeminiContents {
 			selector = WithGoogleNativeToolsSelector(selector)
 		}
 
 		// Apply Anthropic native tools filter (only for Anthropic message API format)
-		if inbound.APIFormat() == llm.APIFormatAnthropicMessage {
+		if llmRequest.APIFormat == llm.APIFormatAnthropicMessage {
 			selector = WithAnthropicNativeToolsSelector(selector)
 		}
 

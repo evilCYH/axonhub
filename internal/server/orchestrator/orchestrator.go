@@ -30,22 +30,26 @@ func NewChatCompletionOrchestrator(
 	promptProtectionRuleService *biz.PromptProtectionRuleService,
 ) *ChatCompletionOrchestrator {
 	connectionTracker := NewDefaultConnectionTracker(256)
+	rateLimitTracker := NewChannelRequestTracker()
 
 	// Initialize model circuit breaker
 	modelCircuitBreaker := biz.NewModelCircuitBreaker()
+
+	rateLimitStrategy := NewRateLimitAwareStrategy(rateLimitTracker, connectionTracker)
 
 	adaptiveLoadBalancer := NewLoadBalancer(systemService, channelService,
 		NewTraceAwareStrategy(requestService),
 		NewErrorAwareStrategy(channelService),
 		NewWeightRoundRobinStrategy(channelService),
-		NewConnectionAwareStrategy(channelService, connectionTracker),
+		NewLatencyAwareStrategy(channelService),
+		rateLimitStrategy,
 	)
 
 	failoverLoadBalancer := NewLoadBalancer(systemService, channelService,
-		NewWeightStrategy(), NewRandomStrategy())
+		NewWeightStrategy(), NewRandomStrategy(), rateLimitStrategy)
 
 	circuitBreakerLoadBalancer := NewLoadBalancer(systemService, channelService,
-		NewWeightStrategy(), NewModelAwareCircuitBreakerStrategy(modelCircuitBreaker))
+		NewWeightStrategy(), NewModelAwareCircuitBreakerStrategy(modelCircuitBreaker), rateLimitStrategy)
 
 	return &ChatCompletionOrchestrator{
 		Inbound:         inbound,
@@ -65,6 +69,7 @@ func NewChatCompletionOrchestrator(
 		channelSelector:            NewDefaultSelector(channelService, modelService, systemService),
 		selectedChannelIds:         []int{},
 		connectionTracker:          connectionTracker,
+		rateLimitTracker:           rateLimitTracker,
 		adaptiveLoadBalancer:       adaptiveLoadBalancer,
 		failoverLoadBalancer:       failoverLoadBalancer,
 		circuitBreakerLoadBalancer: circuitBreakerLoadBalancer,
@@ -96,8 +101,10 @@ type ChatCompletionOrchestrator struct {
 	adaptiveLoadBalancer       *LoadBalancer
 	failoverLoadBalancer       *LoadBalancer
 	circuitBreakerLoadBalancer *LoadBalancer
-	// The connection tracker for connection aware load balancing.
+	// The connection tracker used for request lifetime tracking and rate-limit concurrency fallback.
 	connectionTracker ConnectionTracker
+	// The rate limit tracker for rate limit aware load balancing.
+	rateLimitTracker *ChannelRequestTracker
 	// The model circuit breaker for circuit-breaker load balancing.
 	modelCircuitBreaker *biz.ModelCircuitBreaker
 
@@ -212,6 +219,10 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 	// Add outbound middlewares (executed after outbound.TransformRequest)
 	middlewares = append(middlewares,
 		applyOverrideRequestBody(outbound),
+		// applyUserAgentPassThrough runs before header overrides to set the initial
+		// User-Agent value (either from client pass-through or default "axonhub/1.0").
+		// This allows override headers to modify the User-Agent if configured.
+		applyUserAgentPassThrough(outbound, processor.SystemService),
 		applyOverrideRequestHeaders(outbound),
 
 		// Unified performance tracking middleware.
@@ -223,6 +234,8 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 		// to ensure that the request execution is created with the correct request bodys.
 		persistRequestExecution(outbound),
 
+		// Rate limit tracking middleware for load balancing.
+		withRateLimitTracking(outbound, processor.rateLimitTracker),
 		// Connection tracking middleware for load balancing.
 		withConnectionTracking(outbound, processor.connectionTracker),
 	)

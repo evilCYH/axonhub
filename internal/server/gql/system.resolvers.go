@@ -56,6 +56,16 @@ func (r *mutationResolver) UpdateRetryPolicy(ctx context.Context, input biz.Retr
 	return true, nil
 }
 
+// UpdateWebhookNotifierConfig is the resolver for the updateWebhookNotifierConfig field.
+func (r *mutationResolver) UpdateWebhookNotifierConfig(ctx context.Context, input biz.WebhookNotifierConfig) (bool, error) {
+	err := r.systemService.SetWebhookNotifierConfig(ctx, &input)
+	if err != nil {
+		return false, fmt.Errorf("failed to update webhook notifier config: %w", err)
+	}
+
+	return true, nil
+}
+
 // UpdateSystemModelSettings is the resolver for the updateSystemModelSettings field.
 func (r *mutationResolver) UpdateSystemModelSettings(ctx context.Context, input biz.SystemModelSettings) (bool, error) {
 	err := r.systemService.SetModelSettings(ctx, input)
@@ -108,7 +118,15 @@ func (r *mutationResolver) CompleteAutoDisableChannelOnboarding(ctx context.Cont
 
 // UpdateSystemChannelSettings is the resolver for the updateSystemChannelSettings field.
 func (r *mutationResolver) UpdateSystemChannelSettings(ctx context.Context, input biz.SystemChannelSettings) (bool, error) {
-	err := r.systemService.SetChannelSetting(ctx, input)
+	setting := *r.systemService.ChannelSettingOrDefault(ctx)
+	if input.Probe.Frequency != "" {
+		setting.Probe = input.Probe
+	}
+	if input.AutoSync.Frequency != "" {
+		setting.AutoSync = input.AutoSync
+	}
+
+	err := r.systemService.SetChannelSetting(ctx, setting)
 	if err != nil {
 		return false, fmt.Errorf("failed to update channel setting: %w", err)
 	}
@@ -189,6 +207,16 @@ func (r *mutationResolver) DeleteProxyPreset(ctx context.Context, url string) (b
 	return true, nil
 }
 
+// UpdateUserAgentPassThroughSettings is the resolver for the updateUserAgentPassThroughSettings field.
+func (r *mutationResolver) UpdateUserAgentPassThroughSettings(ctx context.Context, input UpdateUserAgentPassThroughSettingsInput) (bool, error) {
+	err := r.systemService.SetUserAgentPassThrough(ctx, input.Enabled)
+	if err != nil {
+		return false, fmt.Errorf("failed to update user-agent pass-through settings: %w", err)
+	}
+
+	return true, nil
+}
+
 // SystemStatus is the resolver for the systemStatus field.
 func (r *queryResolver) SystemStatus(ctx context.Context) (*SystemStatus, error) {
 	isInitialized, err := r.systemService.IsInitialized(ctx)
@@ -227,6 +255,11 @@ func (r *queryResolver) StoragePolicy(ctx context.Context) (*biz.StoragePolicy, 
 // RetryPolicy is the resolver for the retryPolicy field.
 func (r *queryResolver) RetryPolicy(ctx context.Context) (*biz.RetryPolicy, error) {
 	return r.systemService.RetryPolicy(ctx)
+}
+
+// WebhookNotifierConfig is the resolver for the webhookNotifierConfig field.
+func (r *queryResolver) WebhookNotifierConfig(ctx context.Context) (*biz.WebhookNotifierConfig, error) {
+	return r.systemService.WebhookNotifierConfig(ctx)
 }
 
 // SystemModelSettings is the resolver for the systemModelSettings field.
@@ -337,4 +370,16 @@ func (r *queryResolver) ProxyPresets(ctx context.Context) ([]*biz.ProxyPreset, e
 	}
 
 	return lo.ToSlicePtr(presets), nil
+}
+
+// UserAgentPassThroughSettings is the resolver for the userAgentPassThroughSettings field.
+func (r *queryResolver) UserAgentPassThroughSettings(ctx context.Context) (*UserAgentPassThroughSettings, error) {
+	enabled, err := r.systemService.UserAgentPassThrough(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user-agent pass-through settings: %w", err)
+	}
+
+	return &UserAgentPassThroughSettings{
+		Enabled: enabled,
+	}, nil
 }

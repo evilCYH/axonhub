@@ -64,6 +64,7 @@ export const channelTypeSchema = z.enum([
   'antigravity',
   'cerebras',
   'nanogpt',
+  'nanogpt_responses',
   'fireworks',
 ]);
 export type ChannelType = z.infer<typeof channelTypeSchema>;
@@ -142,6 +143,14 @@ export const channelProbeDataSchema = z.object({
 });
 export type ChannelProbeData = z.infer<typeof channelProbeDataSchema>;
 
+// Channel Rate Limit
+export const channelRateLimitSchema = z.object({
+  rpm: z.number().int().positive().optional().nullable(),
+  tpm: z.number().int().positive().optional().nullable(),
+  maxConcurrent: z.number().int().positive().optional().nullable(),
+});
+export type ChannelRateLimit = z.infer<typeof channelRateLimitSchema>;
+
 // Channel Settings
 export const channelSettingsSchema = z.object({
   extraModelPrefix: z.string().optional(),
@@ -153,7 +162,10 @@ export const channelSettingsSchema = z.object({
   headerOverrideOperations: z.array(overrideOperationSchema).optional(),
   proxy: proxyConfigSchema.optional().nullable(),
   transformOptions: transformOptionsSchema.optional(),
+  passThroughUserAgent: z.boolean().optional().nullable(),
+  rateLimit: channelRateLimitSchema.optional().nullable(),
 });
+
 export type ChannelSettings = z.infer<typeof channelSettingsSchema>;
 
 // Channel Model Entry
@@ -225,6 +237,24 @@ export const channelSchema = z.object({
   allModelEntries: z.array(channelModelEntrySchema).optional(),
 });
 export type Channel = z.infer<typeof channelSchema>;
+
+export const testAPIKeyResultSchema = z.object({
+  keyPrefix: z.string(),
+  success: z.boolean(),
+  latency: z.number(),
+  error: z.string().optional().nullable(),
+  disabled: z.boolean(),
+});
+export type TestAPIKeyResult = z.infer<typeof testAPIKeyResultSchema>;
+
+export const testChannelAPIKeysPayloadSchema = z.object({
+  channelID: z.string(),
+  total: z.number(),
+  successCount: z.number(),
+  failedCount: z.number(),
+  results: z.array(testAPIKeyResultSchema),
+});
+export type TestChannelAPIKeysPayload = z.infer<typeof testChannelAPIKeysPayloadSchema>;
 
 // Pricing Schemas
 export const pricingModeSchema = z.enum(['flat_fee', 'usage_per_unit', 'usage_tiered']);
@@ -590,6 +620,28 @@ export const channelOrderingConnectionSchema = z.object({
   totalCount: z.number(),
 });
 export type ChannelOrderingConnection = z.infer<typeof channelOrderingConnectionSchema>;
+
+export const channelSummarySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  type: channelTypeSchema,
+  status: channelStatusSchema,
+  baseURL: z.string(),
+  orderingWeight: z.number(),
+  tags: z.array(z.string()).optional().default([]).nullable(),
+  allModelEntries: z.array(channelModelEntrySchema).optional().default([]),
+});
+export type ChannelSummary = z.infer<typeof channelSummarySchema>;
+
+export const channelSummaryConnectionSchema = z.object({
+  edges: z.array(
+    z.object({
+      node: channelSummarySchema,
+    })
+  ),
+  totalCount: z.number(),
+});
+export type ChannelSummaryConnection = z.infer<typeof channelSummaryConnectionSchema>;
 
 export const bulkUpdateChannelOrderingInputSchema = z.object({
   channels: z

@@ -330,6 +330,22 @@ type SystemStatus struct {
 	IsInitialized bool `json:"isInitialized"`
 }
 
+type TestAPIKeyResult struct {
+	KeyPrefix string  `json:"keyPrefix"`
+	Success   bool    `json:"success"`
+	Latency   float64 `json:"latency"`
+	Error     *string `json:"error,omitempty"`
+	Disabled  bool    `json:"disabled"`
+}
+
+type TestChannelAPIKeysPayload struct {
+	ChannelID    objects.GUID        `json:"channelID"`
+	Total        int                 `json:"total"`
+	SuccessCount int                 `json:"successCount"`
+	FailedCount  int                 `json:"failedCount"`
+	Results      []*TestAPIKeyResult `json:"results"`
+}
+
 type TestChannelInput struct {
 	ChannelID objects.GUID            `json:"channelID"`
 	ModelID   *string                 `json:"modelID,omitempty"`
@@ -439,6 +455,14 @@ type UpdateProjectUserInput struct {
 	Scopes        []string        `json:"scopes,omitempty"`
 	AddRoleIDs    []*objects.GUID `json:"addRoleIDs,omitempty"`
 	RemoveRoleIDs []*objects.GUID `json:"removeRoleIDs,omitempty"`
+}
+
+type UpdateUserAgentPassThroughSettingsInput struct {
+	Enabled bool `json:"enabled"`
+}
+
+type UserAgentPassThroughSettings struct {
+	Enabled bool `json:"enabled"`
 }
 
 type VersionCheck struct {
